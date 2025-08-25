@@ -2,6 +2,7 @@ import pandas as pd
 from pathlib import Path
 from torch.utils.data import Dataset
 import torch
+import torch.nn.functional as F
 from kokoro import KPipeline
 from typing import List, Dict, Any, Tuple, Optional
 import  warnings

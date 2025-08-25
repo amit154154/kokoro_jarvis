@@ -10,7 +10,9 @@ PyTorch Lightning SFT training for Kokoro KModel using your transcripts/audio.
 - Periodic generation every K steps with W&B audio logging or disk saves
 - Logs grad_norm and lr each step
 """
-from datasets.KokoroJarvisSFTDataset import KokoroJarvisSFTDataset,collate_fn
+# Add near the top with other imports
+from datasets.LibriTTSSingleSpeakerDataset import LibriTTSSingleSpeakerDataset as LTS_Spk_Ds, collate_fn as lts_collate_fn
+from datasets.KokoroJarvisSFTDataset import KokoroJarvisSFTDataset, collate_fn as kokoro_collate_fn
 from utills import *
 from losses.MultiResSTFTLoss import MultiResSTFTLoss
 
@@ -230,10 +232,10 @@ class KokoroSFTModule(pl.LightningModule):
 
         preds_padded = self._forward_batch(pss, pack)
         # match lengths
-        if wav.shape[-1] < preds_padded.shape[-1]:
-            wav = F.pad(wav, (0, preds_padded.shape[-1] - wav.shape[-1]))
-        elif wav.shape[-1] > preds_padded.shape[-1]:
-            preds_padded = F.pad(preds_padded, (0, wav.shape[-1] - preds_padded.shape[-1]))
+        # AFTER: compare on the overlap only
+        L = min(wav.shape[-1], preds_padded.shape[-1])
+        wav = wav[..., :L]
+        preds_padded = preds_padded[..., :L]
 
         loss_stft, stft_metrics = self.stft_loss(preds_padded, wav)
         loss_l1 = F.l1_loss(preds_padded, wav)
@@ -260,10 +262,9 @@ class KokoroSFTModule(pl.LightningModule):
             pack = batch["voice_pack"].to(self.device)
 
         preds_padded = self._forward_batch(pss, pack)
-        if wav.shape[-1] < preds_padded.shape[-1]:
-            wav = F.pad(wav, (0, preds_padded.shape[-1] - wav.shape[-1]))
-        elif wav.shape[-1] > preds_padded.shape[-1]:
-            preds_padded = F.pad(preds_padded, (0, wav.shape[-1] - preds_padded.shape[-1]))
+        L = min(wav.shape[-1], preds_padded.shape[-1])
+        wav = wav[..., :L]
+        preds_padded = preds_padded[..., :L]
 
         loss_stft, _ = self.stft_loss(preds_padded, wav)
         loss_l1 = F.l1_loss(preds_padded, wav)
@@ -310,8 +311,18 @@ class KokoroSFTModule(pl.LightningModule):
 
 def main():
     p = argparse.ArgumentParser()
+    # ----- dataset switch -----
+    p.add_argument("--dataset_type", default="libritts_rp", choices=["kokoro_csv", "libritts_rp"],
+                   help="Choose dataset: 'kokoro_csv' (existing) or 'libritts_rp' (LibriTTS-R/P single-speaker)")
+    # existing (kokoro_csv) args
     p.add_argument("--audio_root", default="data/JarvisSounds", type=str)
     p.add_argument("--metadata_csv", default="data/process_JarvisSounds/metadata.csv", type=str)
+    # libritts_rp args
+    p.add_argument("--libritts_root", default="/Users/mac/PycharmProjects/Jarvis_Phone/data/LibriTTS_R/dev-clean",
+                   type=str)
+    p.add_argument("--speaker_id", default="251", type=str, help="LibriTTS speaker id to fine-tune on")
+
+    # ----- the rest of your args unchanged -----
     p.add_argument("--out_dir", default="runs/kokoro_sft", type=str)
     p.add_argument("--voice", default="af_heart", type=str)
     p.add_argument("--lang_code", default="a", type=str)  # American English
@@ -320,46 +331,48 @@ def main():
     p.add_argument("--lr", default=2e-4, type=float)
     p.add_argument("--grad_clip", default=1.0, type=float)
     p.add_argument("--save_every", default=1000, type=int)
-    p.add_argument("--val_every", default=150, type=int, help="validate every N training steps")
+    p.add_argument("--val_every", default=50, type=int, help="validate every N training steps")
     p.add_argument("--num_workers", default=0, type=int)
     p.add_argument("--max_train_items", default=0, type=int, help="debug cap; 0=all")
     p.add_argument("--export_val_samples", action="store_true")
-    p.add_argument(
-        "--log_wandb",
-        nargs="?",
-        const=True,
-        default=True,
-        type=str2bool_default_true,
-        help="Use Weights & Biases logging (default: True). Pass '--log_wandb false' to disable."
-    )
-    p.add_argument("--gen_every", default=10, type=int, help="Every K steps, generate predefined text (0=off)")
-    p.add_argument("--gen_text", nargs='*', default=["hello my name is Jarvis"], type=str, help="Texts to synthesize at each generation interval")
-    p.add_argument("--train_plan", default="A", choices=["A", "full", "freeze_all"], help="Freeze plan: A (speaker/style), full finetune, or freeze_all")
-    p.add_argument(
-        "--optimize_voice_pack",
-        nargs="?",
-        const=True,
-        default=False,
-        type=str2bool_default_false,
-        help="If set, make the selected voice_pack a trainable parameter initialized from the current voice."
-    )
-    p.add_argument("--log_pairs_every", default=5, type=int,
-                   help="Every K steps log GT vs Pred pairs from training batch (0=off)")
-    p.add_argument("--log_pairs_n", default=1, type=int,
-                   help="Max number of pairs to log per logging step")
+    p.add_argument("--log_wandb", nargs="?", const=True, default=True, type=str2bool_default_true)
+    p.add_argument("--gen_every", default=10, type=int)
+    p.add_argument("--gen_text", nargs='*', default=["hello my name is mandy, what is yours?"], type=str)
+    p.add_argument("--train_plan", default="freeze_all", choices=["A", "full", "freeze_all"])
+    p.add_argument("--optimize_voice_pack", nargs="?", const=True, default=True, type=str2bool_default_false)
+    p.add_argument("--log_pairs_every", default=5, type=int)
+    p.add_argument("--log_pairs_n", default=1, type=int)
     args = p.parse_args()
 
-    set_seed(1337)
-    out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
-
     # Dataset / splits
-    full = KokoroJarvisSFTDataset(
-        audio_root=Path(args.audio_root),
-        metadata_csv=Path(args.metadata_csv),
-        lang_code=args.lang_code,
-        voice=args.voice,
-        quiet_pipeline=True
-    )
+    set_seed(1337)
+    out_dir = Path(args.out_dir);
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # -------- dataset selection --------
+    if args.dataset_type == "kokoro_csv":
+        full = KokoroJarvisSFTDataset(
+            audio_root=Path(args.audio_root),
+            metadata_csv=Path(args.metadata_csv),
+            lang_code=args.lang_code,
+            voice=args.voice,
+            quiet_pipeline=True
+        )
+        active_collate = kokoro_collate_fn
+    else:
+        # LibriTTS-R/P: single speaker
+        full = LTS_Spk_Ds(
+            root_dir=Path(args.libritts_root),
+            speaker_id=str(args.speaker_id),
+            lang_code=args.lang_code,
+            voice=args.voice,
+            quiet_pipeline=True
+        )
+        active_collate = lts_collate_fn
+
+    print(f"[dataset] {args.dataset_type}: {len(full)} items "
+          + (f"(speaker_id={getattr(full, 'speaker_id', 'NA')})" if hasattr(full, 'speaker_id') else ""))
+
     indices = list(range(len(full)))
     random.shuffle(indices)
     n_val = max(1, int(0.02 * len(indices)))
@@ -371,12 +384,11 @@ def main():
     subset_val = torch.utils.data.Subset(full, val_idx)
 
     dl_train = DataLoader(subset_train, batch_size=args.batch_size, shuffle=True,
-                          num_workers=args.num_workers, collate_fn=collate_fn, pin_memory=False,
+                          num_workers=args.num_workers, collate_fn=active_collate, pin_memory=False,
                           persistent_workers=(args.num_workers > 0))
     dl_val = DataLoader(subset_val, batch_size=1, shuffle=False,
-                        num_workers=max(1, args.num_workers // 2), collate_fn=collate_fn, pin_memory=False,
+                        num_workers=max(1, args.num_workers // 2), collate_fn=active_collate, pin_memory=False,
                         persistent_workers=(max(1, args.num_workers // 2) > 0))
-
     # Lightning module
     module = KokoroSFTModule(
         lr=args.lr,
@@ -395,14 +407,13 @@ def main():
     )
 
     # Logger(s)
-    logger = None
     if args.log_wandb:
         project = os.environ.get("WANDB_PROJECT", "kokoro_sft")
         logger = WandbLogger(project=project, save_dir=str(out_dir))
-        logger.experiment.config.update({
-            **vars(args),
-            "sr": SR,
-        })
+        cfg = {**vars(args), "sr": SR}
+        logger.experiment.config.update(cfg)
+    else:
+        logger = None
 
     # Callbacks
     ckpt_best = ModelCheckpoint(
