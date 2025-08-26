@@ -16,9 +16,29 @@ This provides a lightweight way to adapt Kokoro to a target voice without fully 
 
 #### Results
 
-| Visualization                                                                                                                                      | Audio Samples                                                                                                                                                                                                                                                                                |
-|----------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 🎥 [Coefficient Trajectory](assets/optemize_voices/coeff_viz.mp4) <br> _The training path of the mixture weights in the circular embedding space._ | 🔊 [Start Generation](assets/optemize_voices/start_generation.wav) <br> _Before optimization_ <br><br> 🔊 [Optimized Generation](optemize_voices/optemize_generation.wav) <br> _After optimization_ <br><br> 🎙️ [Ground Truth](assets/optemize_voices/ground_truth.wav) <br> _Target voice_ |
+<table>
+<tr>
+  <td align="center"><b>Coefficient Trajectory</b></td>
+  <td align="center"><b>Audio Samples</b></td>
+</tr>
+<tr>
+  <td>
+    <video src="assets/optemize_voices/coeff_viz.mp4" controls width="400"></video>
+    <br>
+    <em>Training path of the mixture weights in the circular embedding space.</em>
+  </td>
+  <td>
+    <p><b>Start Generation</b></p>
+    <audio controls src="assets/optemize_voices/start_generation.wav"></audio>
+    <br><br>
+    <p><b>Optimized Generation</b></p>
+    <audio controls src="assets/optemize_voices/optemize_generation.wav"></audio>
+    <br><br>
+    <p><b>Ground Truth</b></p>
+    <audio controls src="assets/optemize_voices/ground_truth.wav"></audio>
+  </td>
+</tr>
+</table>
 
 <p align="center">
   <img src="assets/optemize_voices/loss_figure.png" alt="Training Loss" width="500"/>
