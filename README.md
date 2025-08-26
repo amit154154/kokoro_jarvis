@@ -30,7 +30,7 @@ You can generate a coefficient trajectory video, similar to the one shown in the
 <div align="center">
   <img src="assets/optemize_voices/coeff_viz.gif" alt="Coefficient trajectory (animated)" width="100%"/><br/>
   <sub>
-    Training path of the mixture weights in the circular embedding space.
+    Training path of the mixture weights in the circular embedding space, probably didnt converge yet.
     &nbsp;•&nbsp;
     <a href="assets/optemize_voices/coeff_viz.mp4">Download MP4</a>
   </sub>
