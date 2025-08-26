@@ -33,7 +33,7 @@ class KokoroJarvisSFTDataset(Dataset):
         self.max_phonemes = max_phonemes
         self.voice = voice
 
-        df = pd.read_csv(metadata_csv, keep_default_na=False)
+        df = pd.read_csv(metadata_csv, sep="|", keep_default_na=False, engine="python")
         rows = []
         for _, r in df.iterrows():
             if not str(r.get("has_speech", True)).lower() in ("true", "1"):

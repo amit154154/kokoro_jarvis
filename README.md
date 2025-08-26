@@ -49,7 +49,7 @@ _GitHub tip: the README preview doesn’t always render audio players. Click a l
 
 <p align="center">
   <img src="assets/optemize_voices/loss_figure.png" width="500"/>
-  <br><em>Loss curve showing convergence during coefficient optimization.</em>
+  <br><em>Loss curve showing convergence during coefficient optimization <a href="https://wandb.ai/amit154154/kokoro_opt/runs/nrtl7bn1?nw=nwuseramit154154">W&B</a>.</em>
 </p>
 
 </details>

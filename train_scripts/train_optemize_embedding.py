@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os, argparse, json, math
-from typing import  Dict, Any
+from typing import List, Tuple, Dict, Any
 
 from torch.utils.data import DataLoader, Subset
 
@@ -14,6 +14,11 @@ from datasets.LibriTTSSingleSpeakerDataset import (
     collate_fn as lts_collate_fn,
 )
 from utills import *
+from pathlib import Path
+from datasets.KokoroJarvisSFTDataset import (
+    KokoroJarvisSFTDataset as KJS_SFT_Ds,
+    collate_fn as kjs_collate_fn,
+)
 
 from kokoro.model import KModel
 from kokoro import KPipeline
@@ -54,6 +59,8 @@ class KokoroEmbedOptimModule(pl.LightningModule):
         log_every: int = 5,
         demo_log_every: int = 15,
         demo_text: str = "Hi! This is an optimized Kokoro voice embedding.",
+    default_weights_str: str = "",  # <-
+
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["base_packs", "voice_names"])
@@ -65,12 +72,9 @@ class KokoroEmbedOptimModule(pl.LightningModule):
 
         self.voice_names = voice_names
 
-        # Pre-stack base packs as buffer (Lightning moves buffers to device)
-        if mode == "mixture":
-            base = torch.stack(base_packs, dim=0)  # [N,T,1,D] on CPU
-            self.register_buffer("base_packs_buf", base, persistent=False)
-        else:
-            self.base_packs_buf = None
+        # Pre-stack base packs as buffer (Lightning moves buffers to device) for both modes
+        base = torch.stack(base_packs, dim=0)  # [N,T,1,D] on CPU
+        self.register_buffer("base_packs_buf", base, persistent=False)
 
         # STFT windows as BUFFERS; placed onto chosen device in on_train_start
         self.register_buffer("win_512",  torch.hann_window(512),  persistent=False)
@@ -80,7 +84,8 @@ class KokoroEmbedOptimModule(pl.LightningModule):
         # remember where to compute loss
         self._stft_device_choice = stft_device
         self._stft_dev = None  # set in on_train_start
-
+        self.default_weights_str = default_weights_str
+        self.gt_embed = None
         # Trainables
         if mode == "mixture":
             N = len(voice_names)
@@ -95,6 +100,35 @@ class KokoroEmbedOptimModule(pl.LightningModule):
         self._demo_pipe = KPipeline(lang_code="a", model=False)
 
     # -------- helpers --------
+    @staticmethod
+    def _parse_weights_any(raw: str, names: List[str]) -> torch.Tensor:
+        """
+        Parse either comma-separated floats (positional; length must match 'names')
+        or name:value pairs. Returns a 1D torch.FloatTensor normalized to sum to 1.
+        """
+        if raw is None or str(raw).strip() == "":
+            raise ValueError("Empty DEFAULT_WEIGHTS_STR")
+        parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+        named = any(":" in p for p in parts)
+        if named:
+            lut = {n: i for i, n in enumerate(names)}
+            w = [0.0] * len(names)
+            for p in parts:
+                k, v = p.split(":", 1)
+                k = k.strip()
+                val = float(v.strip())
+                if k not in lut:
+                    raise ValueError(f"Unknown voice '{k}'. Valid: {', '.join(names)}")
+                w[lut[k]] = max(0.0, val)
+        else:
+            vals = [max(0.0, float(x)) for x in parts]
+            if len(vals) != len(names):
+                raise ValueError(f"Positional weights length {len(vals)} != number of names {len(names)}")
+            w = vals
+        s = sum(w)
+        if s <= 0:
+            raise ValueError("All DEFAULT_WEIGHTS_STR weights are zero.")
+        return torch.tensor([x / s for x in w], dtype=torch.float32)
     def _progress(self) -> float:
         total = max(1, self.hparams.steps_per_epoch * self.hparams.max_epochs)
         return min(1.0, float(self.global_step) / float(total))
@@ -260,6 +294,14 @@ class KokoroEmbedOptimModule(pl.LightningModule):
         self.log("val_stft_sc", sc, on_epoch=True, batch_size=bs)
         self.log("val_stft_mag", mag, on_epoch=True, batch_size=bs)
         self.log("val_l1", l1, on_epoch=True, batch_size=bs)
+
+        # Optionally log validation MSE to GT
+        if getattr(self, "gt_embed", None) is not None:
+            with torch.no_grad():
+                curr = self._current_pack()
+                val_mse = F.mse_loss(curr.to(self.gt_embed.device), self.gt_embed)
+            self.log("val_mse_to_gt", val_mse, on_epoch=True, batch_size=bs)
+
         return {"val_loss": l1}
 
     def on_train_batch_end(self, outputs, batch, batch_idx):
@@ -282,6 +324,14 @@ class KokoroEmbedOptimModule(pl.LightningModule):
                 pairs.sort(key=lambda x: x[1], reverse=True)
                 top = ", ".join([f"{n}:{v:.3f}" for n, v in pairs[:8]])
                 print(f"[step {step}] weights: {top}")
+            # If GT embedding is available, log MSE(current_pack, GT)
+        if self.gt_embed is not None:
+            with torch.no_grad():
+                curr = self._current_pack()
+                mse = F.mse_loss(curr.to(self.gt_embed.device), self.gt_embed)
+            self.log("mse_to_gt", mse, prog_bar=True, on_step=True, on_epoch=True)
+            if should_print:
+                print(f"[step {step}] mse_to_gt: {float(mse):.6f}")
 
         if self.hparams.mode == "mixture" and self.logits is not None:
             with torch.no_grad():
@@ -358,6 +408,15 @@ class KokoroEmbedOptimModule(pl.LightningModule):
         # move base packs buffer to training device once
         if self.base_packs_buf is not None:
             self.base_packs_buf.data = self.base_packs_buf.data.to(self.device)
+        # Build GT embedding from DEFAULT_WEIGHTS_STR (if provided)
+        if self.default_weights_str:
+            try:
+                w = self._parse_weights_any(self.default_weights_str, self.voice_names).to(self.device)
+                # base_packs_buf: [N,T,1,D], w: [N] -> result [T,1,D]
+                self.gt_embed = torch.einsum("n,ntcd->tcd", w, self.base_packs_buf).detach()
+            except Exception as e:
+                print(f"[warn] Failed to build GT embedding from DEFAULT_WEIGHTS_STR: {e}")
+                self.gt_embed = None
 
     def on_train_end(self):
         out_dir = Path(self.trainer.default_root_dir)
@@ -391,6 +450,14 @@ def main():
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--max_train_items", type=int, default=0)  # ignored in quick test
 
+    # Dataset selection
+    p.add_argument("--dataset_type", choices=["libritts", "kokoro_synth"], default="kokoro_synth",
+                   help="Use 'libritts' (single-speaker LibriTTS) or 'kokoro_synth' (folder with metadata.csv produced by the generator).")
+    p.add_argument("--synth_root", type=str, default="/Users/mac/PycharmProjects/Jarvis_Phone/data/syntetic_datasets/fully_sara",
+                   help="Root folder containing WAV files and metadata.csv for kokoro_synth.")
+    p.add_argument("--synth_metadata_csv", type=str, default="metadata.csv",
+                   help="Metadata CSV filename inside synth_root (pipe-delimited).")
+
     # Voices
     p.add_argument("--voices_dir", type=str,
                    default="/Users/mac/PycharmProjects/Jarvis_Phone/kokoro_us_voices",
@@ -400,7 +467,7 @@ def main():
     p.add_argument("--mode", choices=["mixture", "embedding"], default="mixture")
 
     # LRs
-    p.add_argument("--logits_lr", type=float, default=2e-3)  # a bit higher for quick movement
+    p.add_argument("--logits_lr", type=float, default=4e-3)  # a bit higher for quick movement
     p.add_argument("--emb_lr", type=float, default=2e-4)
     p.add_argument("--weight_decay", type=float, default=0.0)
     p.add_argument("--grad_clip", type=float, default=1.0)
@@ -426,7 +493,9 @@ def main():
     p.add_argument("--loss_log10", type=str, default="true")
     p.add_argument("--l1_weight", type=float, default=0.05)
     p.add_argument("--entropy_coeff", type=float, default=-0.001)
-
+    # GT reference (optional)
+    p.add_argument("--default_weights_str", type=str, default="af_sarah:1.0",
+                   help="Reference weights (positional or name:value). If set, logs MSE to the GT embedding built from these weights.")
     # Logging
     p.add_argument("--log_wandb", type=str, default="true")
     p.add_argument("--log_every", type=int, default=20)
@@ -449,15 +518,32 @@ def main():
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
 
     # Dataset
-    full = LTS_Spk_Ds(
-        root_dir=Path(args.libritts_root),
-        speaker_id=str(args.speaker_id),
-        lang_code="a",
-        voice="af_heart",
-        quiet_pipeline=True,
-        shuffle=True,
-    )
-    print(f"[dataset] {len(full)} items (speaker_id={getattr(full, 'speaker_id', 'NA')})")
+    if args.dataset_type == "libritts":
+        full = LTS_Spk_Ds(
+            root_dir=Path(args.libritts_root),
+            speaker_id=str(args.speaker_id),
+            lang_code="a",
+            voice="af_heart",
+            quiet_pipeline=True,
+            shuffle=True,
+        )
+        collate = lts_collate_fn
+    else:
+        synth_root = Path(args.synth_root)
+        meta_csv = synth_root / args.synth_metadata_csv
+        if not synth_root.exists():
+            raise FileNotFoundError(f"--synth_root not found: {synth_root}")
+        if not meta_csv.exists():
+            raise FileNotFoundError(f"metadata CSV not found at: {meta_csv}")
+        full = KJS_SFT_Ds(
+            audio_root=synth_root,
+            metadata_csv=meta_csv,
+            lang_code="a",
+            voice="af_heart",
+            quiet_pipeline=True,
+        )
+        collate = kjs_collate_fn
+    print(f"[dataset] {len(full)} items (source={args.dataset_type})")
 
     # Decide loss device
     if args.stft_device == "auto":
@@ -479,6 +565,9 @@ def main():
                     for k in ("text", "pss", "transcript", "utt"):
                         if k in meta and isinstance(meta[k], str):
                             return len(meta[k])
+                # Handle tuple-style items from KokoroJarvisSFTDataset: (wav_path, text)
+                if isinstance(meta, (list, tuple)) and len(meta) >= 2 and isinstance(meta[1], str):
+                    return len(meta[1])
         except Exception:
             pass
         return 0
@@ -500,7 +589,7 @@ def main():
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.num_workers,
-        collate_fn=lts_collate_fn,
+        collate_fn=collate,
         pin_memory=use_pin,
         persistent_workers=(args.num_workers > 0),
     )
@@ -509,7 +598,7 @@ def main():
         batch_size=1,
         shuffle=False,
         num_workers=max(1, args.num_workers // 2),
-        collate_fn=lts_collate_fn,
+        collate_fn=collate,
         pin_memory=use_pin,
         persistent_workers=(max(1, args.num_workers // 2) > 0),
     )
@@ -549,6 +638,7 @@ def main():
         log_every=args.log_every,
         demo_log_every=args.demo_log_every,
         demo_text=args.demo_text,
+        default_weights_str=args.default_weights_str,
     )
 
     # Logger
@@ -598,7 +688,8 @@ def main():
     else:
         print(f"[train] optimizing full embedding initialized from average of {len(voice_names)} voices (emb_lr={args.emb_lr})")
     print(f"[quick-test] steps/epoch={steps_per_epoch}, epochs={args.epochs}")
-
+    if args.default_weights_str:
+        print(f"[gt] DEFAULT_WEIGHTS_STR set -> {args.default_weights_str}")
     trainer.fit(module, train_dataloaders=dl_train, val_dataloaders=dl_val)
 
     final_ckpt = out_dir / "final.ckpt"
