@@ -15,58 +15,38 @@ The coefficients act as mixing weights, combining multiple pretrained voices int
 This provides a lightweight way to adapt Kokoro to a target voice without fully retraining the model.
 
 #### Results
-
 <details>
 <summary><b>Show coefficient trajectory & audio samples</b></summary>
 
 <br>
 
-<!-- Preview on the left, audio on the right -->
 <div align="center">
 
-<table>
-<tr>
-  <td align="center" width="55%">
-
-    <!-- Animated preview looks great on GitHub -->
-    <img src="assets/optemize_voices/coeff_viz.gif" alt="Coefficient trajectory (animated)" width="100%"/>
-
-    <sub>
-    Training path of the mixture weights in the circular embedding space.<br>
+<div align="center">
+  <img src="assets/optemize_voices/coeff_viz.gif" alt="Coefficient trajectory (animated)" width="100%"/><br/>
+  <sub>
+    Training path of the mixture weights in the circular embedding space.
+    &nbsp;•&nbsp;
     <a href="assets/optemize_voices/coeff_viz.mp4">Download MP4</a>
-    </sub>
+  </sub>
+</div>
 
-  </td>
-  <td align="left" width="45%">
+**Audio Samples**
 
-    <b>Audio Samples</b><br><br>
+- **Start Generation**  
+  <audio controls src="assets/optemize_voices/start_generation.wav"></audio>
 
-    <div>
-      <b>Start Generation</b><br>
-      <audio controls src="assets/optemize_voices/start_generation.wav"></audio>
-    </div>
-    <br>
+- **Optimized Generation**  
+  <audio controls src="assets/optemize_voices/optemize_generation.wav"></audio>
 
-    <div>
-      <b>Optimized Generation</b><br>
-      <audio controls src="assets/optemize_voices/optemize_generation.wav"></audio>
-    </div>
-    <br>
-
-    <div>
-      <b>Ground Truth</b><br>
-      <audio controls src="assets/optemize_voices/ground_truth.wav"></audio>
-    </div>
-
-  </td>
-</tr>
-</table>
+- **Ground Truth**  
+  <audio controls src="assets/optemize_voices/ground_truth.wav"></audio>
 
 </div>
 
 <p align="center">
-  <img src="assets/optemize_voices/loss_figure.png" width="680" alt="Training loss curve"/><br>
-  <em>Loss curve showing convergence during coefficient optimization.</em>
+  <img src="assets/optemize_voices/loss_figure.png" width="500"/>
+  <br><em>Loss curve showing convergence during coefficient optimization.</em>
 </p>
 
 </details>
