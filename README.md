@@ -16,20 +16,57 @@ This provides a lightweight way to adapt Kokoro to a target voice without fully 
 
 #### Results
 
-**Coefficient Trajectory**
-<video src="assets/optemize_voices/coeff_viz.mp4" controls width="500"></video>
+<details>
+<summary><b>Show coefficient trajectory & audio samples</b></summary>
 
-**Audio Samples**
-- Start Generation  
-  <audio controls src="assets/optemize_voices/start_generation.wav"></audio>
+<br>
 
-- Optimized Generation  
-  <audio controls src="assets/optemize_voices/optemize_generation.wav"></audio>
+<!-- Preview on the left, audio on the right -->
+<div align="center">
 
-- Ground Truth  
-  <audio controls src="assets/optemize_voices/ground_truth.wav"></audio>
+<table>
+<tr>
+  <td align="center" width="55%">
+
+    <!-- Animated preview looks great on GitHub -->
+    <img src="assets/optemize_voices/coeff_viz.gif" alt="Coefficient trajectory (animated)" width="100%"/>
+
+    <sub>
+    Training path of the mixture weights in the circular embedding space.<br>
+    <a href="assets/optemize_voices/coeff_viz.mp4">Download MP4</a>
+    </sub>
+
+  </td>
+  <td align="left" width="45%">
+
+    <b>Audio Samples</b><br><br>
+
+    <div>
+      <b>Start Generation</b><br>
+      <audio controls src="assets/optemize_voices/start_generation.wav"></audio>
+    </div>
+    <br>
+
+    <div>
+      <b>Optimized Generation</b><br>
+      <audio controls src="assets/optemize_voices/optemize_generation.wav"></audio>
+    </div>
+    <br>
+
+    <div>
+      <b>Ground Truth</b><br>
+      <audio controls src="assets/optemize_voices/ground_truth.wav"></audio>
+    </div>
+
+  </td>
+</tr>
+</table>
+
+</div>
 
 <p align="center">
-  <img src="assets/optemize_voices/loss_figure.png" width="500"/>
-  <br><em>Loss curve showing convergence during coefficient optimization.</em>
+  <img src="assets/optemize_voices/loss_figure.png" width="680" alt="Training loss curve"/><br>
+  <em>Loss curve showing convergence during coefficient optimization.</em>
 </p>
+
+</details>
