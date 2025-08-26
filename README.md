@@ -31,16 +31,12 @@ This provides a lightweight way to adapt Kokoro to a target voice without fully 
   </sub>
 </div>
 
-**Audio Samples**
+**Audio Samples**  
+_GitHub tip: the README preview doesn’t always render audio players. Click a link below, then press **“View raw”** to play in your browser._
 
-- **Start Generation**  
-  <audio controls src="assets/optemize_voices/start_generation.wav"></audio>
-
-- **Optimized Generation**  
-  <audio controls src="assets/optemize_voices/optemize_generation.wav"></audio>
-
-- **Ground Truth**  
-  <audio controls src="assets/optemize_voices/ground_truth.wav"></audio>
+- ▶️ **Start Generation** — [WAV](assets/optemize_voices/start_generation.wav)
+- ▶️ **Optimized Generation** — [WAV](assets/optemize_voices/optemize_generation.wav)
+- ▶️ **Ground Truth** — [WAV](assets/optemize_voices/ground_truth.wav)
 
 </div>
 
