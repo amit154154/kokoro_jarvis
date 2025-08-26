@@ -2,17 +2,7 @@
 
 This project is an ongoing **research and experimentation framework** around [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) — a super small, efficient text-to-speech (TTS) model.  
 The focus is on **fine-tuning**, **optimizing and exploring voice embeddings**, and investigating future directions for adapting Kokoro to new speakers, styles, and research applications.
-
-## Goals and Research Directions
-
-- ✅ Implement optimization for voice embeddings (both simple coefficient mixing and full embedding)  
-- ✅ Train simple coefficients on a LibriTTS speaker and analyze trajectory + results  
-- [ ] Train simple coefficients on synthetic predefined speaker voices and visualize trajectories/results  
-- [ ] Optimize simple coefficients on a random ensemble of voice embeddings and inspect trajectories  
-- [ ] Explore different optimizers (AdamW, etc.) and compare trajectory smoothness & convergence speed  
-- [ ] Optimize the full embedding and compare results against coefficient-based optimization  
-- [ ] Optimize and fine-tune selected parts of the Kokoro model; compare results to embedding-only methods  
-- [ ] Implement speaker description → voice embedding mapping using LibriTTS + Qwen embeddings (semantic → acoustic mapper)  
+ 
 ## Setup
 First, set up the environment using the [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) codebase. Once setup is complete, try running inference on the model to get started — see `scripts/inference_kokoro.py` for an example.  
 To experiment with different voices or perform small adjustment optimizations, run `scripts/download_voices.py` to download all available voices.
@@ -61,3 +51,15 @@ _GitHub tip: the README preview doesn’t always render audio players. Click a l
 </p>
 
 </details>
+
+
+## Goals and Research Directions
+
+- ✅ Implement optimization for voice embeddings (both simple coefficient mixing and full embedding)  
+- ✅ Train simple coefficients on a LibriTTS speaker and analyze trajectory + results  
+- [ ] Train simple coefficients on synthetic predefined speaker voices and visualize trajectories/results  
+- [ ] Optimize simple coefficients on a random ensemble of voice embeddings and inspect trajectories  
+- [ ] Explore different optimizers (AdamW, etc.) and compare trajectory smoothness & convergence speed  
+- [ ] Optimize the full embedding and compare results against coefficient-based optimization  
+- [ ] Optimize and fine-tune selected parts of the Kokoro model; compare results to embedding-only methods  
+- [ ] Implement speaker description → voice embedding mapping using LibriTTS + Qwen embeddings (semantic → acoustic mapper) 
