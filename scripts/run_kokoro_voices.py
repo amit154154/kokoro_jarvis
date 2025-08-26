@@ -1,60 +1,80 @@
-# kokoro_voice_mixer_gui.py
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+# Kokoro Voice Mixer — Radial Wheel Edition
+# - Cleaner, more informative visualization:
+#   • Circular "voice wheel" with colored anchors
+#   • Draggable mix handle with soft glow + snapping
+#   • Live weight bars with percentages
+#   • Fusion text apply still supported
+# - Same functionality as before (text, speed, output path, synthesis)
+# - No extra dependencies beyond numpy, tkinter, kokoro, soundfile, torch
+
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-import threading, math
 from datetime import datetime
+import threading, math
+from typing import List, Tuple
 
 import numpy as np
 import soundfile as sf
-
-
-
 import torch
 from kokoro import KPipeline
 
 SR = 24000
 
 DEFAULT_VOICES = [
-    # You can change/extend this list. They must exist under the Kokoro repo `voices/`.
-    "af_heart", "am_michael",
+    "af_sarah", "af_jessica", "am_adam", "af_alloy",
+    "af_bella", "am_michael", "af_heart", "af_nicole",
 ]
+
+# Soft color palette (distinct but friendly)
+PALETTE = [
+    "#6E9FFB", "#F28D85", "#8CD17D", "#FFD166",
+    "#BFA0FF", "#6BD1D2", "#FF9F1C", "#FF6FB5",
+]
+
 
 class VoiceMixerGUI:
     def __init__(self, master, lang_code="a", voices=None, radius=180):
         self.master = master
-        master.title("Kokoro Voice Mixer")
+        master.title("Kokoro Voice Mixer — Radial Wheel")
 
         self.lang_code = lang_code
         self.voices = voices or DEFAULT_VOICES
+        self.colors = (PALETTE * ((len(self.voices) + len(PALETTE) - 1) // len(PALETTE)))[:len(self.voices)]
         self.radius = radius
-        self.center = (radius + 40, radius + 40)  # canvas padding
+        self.center = (radius + 50, radius + 50)  # a bit more padding
 
         # Pipeline + model
         self.pipe = KPipeline(lang_code=self.lang_code)
         self.device = self.pipe.model.device
 
-        # Load voice packs (FloatTensor, usually [T, D])
+        # Load voice packs
         self.packs = {}
         self._load_voices()
 
         # ----- UI -----
         self._build_ui()
 
-        # Place anchors around the circle
+        # Anchor positions around a circle
         self.anchor_positions = self._compute_anchor_positions(len(self.voices))
         self._draw_wheel()
 
-        # Mixer point (draggable)
-        self.mix_pos = [self.center[0], self.center[1]]  # start at center
+        # Mixer point (draggable) starts at uniform weights (center)
+        self.mix_pos = [self.center[0], self.center[1]]
         self.mix_handle = None
         self._draw_mixer_point()
 
-        # Easier selection: snap if within N pixels
-        self.snap_radius = 14  # px
+        self.snap_radius = 18  # px
         self.generating = False
-        self._update_weights_label()
+        self._update_weights()
 
-    # ---------- Voice / mix math ----------
+        # Hover highlight state
+        self._hover_anchor_idx = -1
+
+    # ---------- Voice / math ----------
     def _load_voices(self):
         for v in self.voices:
             pack = self.pipe.load_voice(v)
@@ -62,21 +82,20 @@ class VoiceMixerGUI:
                 pack = torch.tensor(pack)
             self.packs[v] = pack.to(torch.float32)
 
-    def _compute_anchor_positions(self, n):
+    def _compute_anchor_positions(self, n: int) -> List[Tuple[float, float]]:
         cx, cy = self.center
         R = self.radius
-        # Distribute equally; start at top (−90°)
         pos = []
         for i in range(n):
-            theta = -math.pi/2 + i * (2*math.pi/n)
+            theta = -math.pi/2 + i * (2 * math.pi / n)  # start at top, clockwise
             x = cx + R * math.cos(theta)
             y = cy + R * math.sin(theta)
             pos.append((x, y))
         return pos
 
     def _weights_from_point(self, x, y, power=2.0):
-        """Inverse-distance weighting with SNAP for easy selection."""
-        # Snap to nearest anchor if close
+        """Inverse-distance weighting with SNAP to nearest anchor for easy selection."""
+        # Snap check
         dmin = float("inf"); imin = -1
         for i, (ax, ay) in enumerate(self.anchor_positions):
             d = math.dist((x, y), (ax, ay))
@@ -85,16 +104,15 @@ class VoiceMixerGUI:
         if dmin <= self.snap_radius:
             w = np.zeros(len(self.anchor_positions), dtype=np.float32)
             w[imin] = 1.0
-            return w
-        # Otherwise inverse-distance weights (stable near center)
+            return w, imin
+
         dists = np.array([max(1e-6, math.dist((x, y), (ax, ay))) for (ax, ay) in self.anchor_positions],
                          dtype=np.float32)
         inv = 1.0 / (dists ** power)
         w = inv / inv.sum()
-        return w
+        return w, -1
 
     def _blend_packs(self, weights):
-        """Weighted average of voice packs (supports [T,D] or [D])."""
         shapes = {tuple(self.packs[v].shape) for v in self.voices}
         if len(shapes) != 1:
             raise RuntimeError(f"Voice packs have differing shapes: {shapes}")
@@ -103,13 +121,14 @@ class VoiceMixerGUI:
         mixed = (w * stacked).sum(dim=0)
         return mixed
 
-    def _point_from_weights(self, weights):
-        """Map a set of weights back to a point (convex combo of anchors)."""
+    def _point_from_weights(self, weights: np.ndarray):
         xs = np.array([ax for (ax, _) in self.anchor_positions], dtype=np.float32)
         ys = np.array([ay for (_, ay) in self.anchor_positions], dtype=np.float32)
-        wx = float((weights * xs).sum())
-        wy = float((weights * ys).sum())
-        return self._clamp_to_circle(wx, wy)
+        w = np.asarray(weights, dtype=np.float32)
+        if w.sum() <= 0: w = np.full_like(w, 1.0 / len(w))
+        w = w / w.sum()
+        wx = float((w * xs).sum()); wy = float((w * ys).sum())
+        return wx, wy
 
     # ---------- Synthesis ----------
     def _generate_audio(self):
@@ -124,31 +143,24 @@ class VoiceMixerGUI:
             outpath = f"kokoro_mix_{ts}.wav"
             self.out_path_var.set(outpath)
 
-        # Compute weights and mix pack
-        w = self._weights_from_point(self.mix_pos[0], self.mix_pos[1])
+        w, _ = self._weights_from_point(self.mix_pos[0], self.mix_pos[1])
         mixed_pack = self._blend_packs(w).to(self.device)
 
-        # Synthesize in a worker thread
         def worker():
             try:
                 self.generate_btn.config(state="disabled")
                 self.generating = True
 
-                # Run pipeline, concatenate all chunks
                 waves = []
                 for res in self.pipe(text, voice=mixed_pack, speed=speed, split_pattern=r"\n+"):
                     if res.audio is None:
                         continue
                     waves.append(res.audio.detach().float().cpu().numpy())
-
                 if not waves:
                     raise RuntimeError("No audio returned from pipeline.")
-
                 audio = np.concatenate(waves, axis=-1).astype("float32")
                 sf.write(outpath, audio, SR)
-                # Show confirmation dialog
                 messagebox.showinfo("Saved", f"Saved: {outpath}")
-
             except Exception as e:
                 messagebox.showerror("Generation error", str(e))
             finally:
@@ -157,55 +169,60 @@ class VoiceMixerGUI:
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ---------- UI construction / events ----------
+    # ---------- UI ----------
     def _build_ui(self):
-        # Canvas (wheel)
-        self.canvas = tk.Canvas(self.master, width=self.center[0]*2, height=self.center[1]*2, bg="#111")
-        self.canvas.grid(row=0, column=0, rowspan=8, padx=10, pady=10)
+        # Left: visual canvas
+        self.canvas = tk.Canvas(self.master, width=self.center[0]*2, height=self.center[1]*2, bg="#0E1116", highlightthickness=0)
+        self.canvas.grid(row=0, column=0, rowspan=10, padx=10, pady=10)
+
+        # Right: controls
+        panel = ttk.Frame(self.master)
+        panel.grid(row=0, column=1, sticky="nswe", padx=(0,10), pady=10)
 
         # Text input
-        ttk.Label(self.master, text="Text").grid(row=0, column=1, sticky="w", padx=(0,6))
-        self.text_entry = tk.Text(self.master, width=48, height=6)
-        self.text_entry.grid(row=1, column=1, padx=(0,10), pady=(0,10))
-        self.text_entry.insert("1.0", "Hello! Mix the voices by dragging the dot, then click Generate.")
+        ttk.Label(panel, text="Text").pack(anchor="w")
+        self.text_entry = tk.Text(panel, width=46, height=6)
+        self.text_entry.pack(fill="x", pady=(2,10))
+        self.text_entry.insert("1.0", "Hello! Drag the dot to mix the voices, then click Generate.")
 
         # Speed
         self.speed_var = tk.DoubleVar(value=1.0)
-        ttk.Label(self.master, text="Speed").grid(row=2, column=1, sticky="w")
-        self.speed_scale = ttk.Scale(self.master, from_=0.6, to=1.4, variable=self.speed_var, orient="horizontal")
-        self.speed_scale.grid(row=3, column=1, sticky="we", padx=(0,10))
+        speed_frame = ttk.Frame(panel); speed_frame.pack(fill="x", pady=(0,8))
+        ttk.Label(speed_frame, text="Speed").pack(side="left")
+        self.speed_scale = ttk.Scale(speed_frame, from_=0.6, to=1.4, variable=self.speed_var, orient="horizontal")
+        self.speed_scale.pack(side="left", fill="x", expand=True, padx=(8,0))
 
         # Output path
+        ttk.Label(panel, text="Output WAV").pack(anchor="w")
+        pfrm = ttk.Frame(panel); pfrm.pack(fill="x", pady=(0,8))
         self.out_path_var = tk.StringVar(value="")
-        ttk.Label(self.master, text="Output WAV").grid(row=4, column=1, sticky="w")
-        pfrm = ttk.Frame(self.master)
-        pfrm.grid(row=5, column=1, sticky="we", padx=(0,10), pady=(0,6))
-        self.out_entry = ttk.Entry(pfrm, textvariable=self.out_path_var, width=40)
+        self.out_entry = ttk.Entry(pfrm, textvariable=self.out_path_var)
         self.out_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(pfrm, text="Browse…", command=self._browse_out).pack(side="left", padx=(6,0))
 
         # Generate button
-        self.generate_btn = ttk.Button(self.master, text="Generate", command=self._generate_audio)
-        self.generate_btn.grid(row=6, column=1, sticky="we", padx=(0,10), pady=(6,10))
+        self.generate_btn = ttk.Button(panel, text="Generate", command=self._generate_audio)
+        self.generate_btn.pack(fill="x", pady=(6,10))
 
-        # Weights readout
-        self.weights_label = ttk.Label(self.master, text="Weights: —")
-        self.weights_label.grid(row=7, column=1, sticky="w")
+        # Weight bars header
+        ttk.Label(panel, text="Mixture Weights").pack(anchor="w")
+        self.bars_canvas = tk.Canvas(panel, height=14 * len(self.voices) + 10, bg="#0E1116", highlightthickness=0)
+        self.bars_canvas.pack(fill="x", pady=(4,10))
+        self._init_bars()
 
-        # Manual weights input ("fusion")
-        ttk.Label(self.master, text="Fusion weights (comma or name:value)").grid(row=8, column=1, sticky="w")
-        fusion_frame = ttk.Frame(self.master)
-        fusion_frame.grid(row=9, column=1, sticky="we", padx=(0,10))
-        # default to uniform weights
+        # Fusion text
+        ttk.Label(panel, text="Fusion weights (comma or name:value)").pack(anchor="w")
+        fusion_frame = ttk.Frame(panel); fusion_frame.pack(fill="x", pady=(2,0))
         default_w = ", ".join([f"{1.0/len(self.voices):.2f}"] * len(self.voices))
         self.fusion_var = tk.StringVar(value=default_w)
         self.fusion_entry = ttk.Entry(fusion_frame, textvariable=self.fusion_var)
         self.fusion_entry.pack(side="left", fill="x", expand=True)
         ttk.Button(fusion_frame, text="Apply", command=self._apply_fusion_text).pack(side="left", padx=(6,0))
 
-        # Mouse bindings for the wheel
+        # Mouse bindings
         self.canvas.bind("<Button-1>", self._on_canvas_click)
         self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<Motion>", self._on_canvas_motion)
 
     def _browse_out(self):
         f = filedialog.asksaveasfilename(defaultextension=".wav",
@@ -214,61 +231,128 @@ class VoiceMixerGUI:
         if f:
             self.out_path_var.set(f)
 
+    # ---------- Drawing the radial wheel ----------
     def _draw_wheel(self):
-        # Circle
         cx, cy = self.center
         R = self.radius
-        self.canvas.create_oval(cx-R, cy-R, cx+R, cy+R, outline="#666", width=2)
 
-        # Anchors
-        for (x, y), name in zip(self.anchor_positions, self.voices):
-            self.canvas.create_oval(x-5, y-5, x+5, y+5, fill="#4cf", outline="")
-            # Label (slight offset outward)
-            dx = (x - cx); dy = (y - cy)
-            lx = x + 12 * (dx / (abs(dx)+abs(dy)+1e-6))
-            ly = y + 12 * (dy / (abs(dx)+abs(dy)+1e-6))
-            self.canvas.create_text(lx, ly, text=name, fill="#ddd", anchor="center",
+        # radial background (soft rings)
+        for i in range(8, 0, -1):
+            r = int(R * i / 8)
+            shade = 20 + i * 8
+            color = f"#{shade:02x}{shade:02x}{shade:02x}"
+            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline="", fill=color)
+
+        # outer ring
+        self.canvas.create_oval(cx - R, cy - R, cx + R, cy + R, outline="#93A1B0", width=2)
+
+        # ticks
+        for i in range(24):
+            a = i * (2 * math.pi / 24.0)
+            x0 = cx + (R - 8) * math.cos(a); y0 = cy + (R - 8) * math.sin(a)
+            x1 = cx + R * math.cos(a);       y1 = cy + R * math.sin(a)
+            self.canvas.create_line(x0, y0, x1, y1, fill="#222")
+
+        # anchors + labels
+        self.anchor_handles = []
+        for (x, y), name, col in zip(self.anchor_positions, self.voices, self.colors):
+            # arc wedge hint
+            self.canvas.create_oval(x - 11, y - 11, x + 11, y + 11, outline="", fill=col)
+            self.canvas.create_oval(x - 6, y - 6, x + 6, y + 6, outline="#000", fill="#FFF")
+            # name slightly outside circle
+            dx, dy = x - cx, y - cy
+            nx = x + 14 * (dx / (abs(dx) + abs(dy) + 1e-6))
+            ny = y + 14 * (dy / (abs(dx) + abs(dy) + 1e-6))
+            self.canvas.create_text(nx, ny, text=name, fill=col, anchor="center",
                                     font=("TkDefaultFont", 9, "bold"))
+            self.anchor_handles.append((x, y))
 
     def _draw_mixer_point(self):
         x, y = self.mix_pos
         if hasattr(self, "mix_handle") and self.mix_handle is not None:
             self.canvas.delete(self.mix_handle)
-        self.mix_handle = self.canvas.create_oval(x-7, y-7, x+7, y+7, fill="#fb5", outline="#000")
-
+            self.canvas.delete(self.mix_glow)
+        # soft "glow" behind (light gray halo)
+        self.mix_glow = self.canvas.create_oval(
+            x - 14, y - 14, x + 14, y + 14,
+            outline="", fill="#ddd"
+        )
+        # main handle (bright yellow)
+        self.mix_handle = self.canvas.create_oval(
+            x - 7, y - 7, x + 7, y + 7,
+            fill="#fb5", outline="#000", width=1
+        )
     def _clamp_to_circle(self, x, y):
         cx, cy = self.center
         dx, dy = x - cx, y - cy
         r = math.hypot(dx, dy)
-        R = self.radius
-        if r <= R or r == 0:
+        if r <= self.radius or r == 0:
             return x, y
-        # project to circumference
-        scale = R / r
-        return cx + dx*scale, cy + dy*scale
+        s = self.radius / r
+        return cx + dx * s, cy + dy * s
 
+    # ---------- Weight bars ----------
+    def _init_bars(self):
+        self.bar_rows = []
+        h = 14
+        W = 300
+        pad = 4
+        for i, (name, col) in enumerate(zip(self.voices, self.colors)):
+            y0 = 5 + i * h
+            # label
+            lbl = self.bars_canvas.create_text(4, y0 + 7, text=f"{name}", fill="#D7E3F4", anchor="w")
+            # background bar
+            bg = self.bars_canvas.create_rectangle(110, y0 + 2, 110 + W, y0 + 12, fill="#1B2430", outline="")
+            # value bar
+            fg = self.bars_canvas.create_rectangle(110, y0 + 2, 110, y0 + 12, fill=col, outline="")
+            # percentage
+            pct = self.bars_canvas.create_text(110 + W + 6, y0 + 7, text="0%", fill="#A7B8CC", anchor="w")
+            self.bar_rows.append((lbl, bg, fg, pct, W))
+
+    def _update_bars(self, weights: np.ndarray):
+        weights = np.asarray(weights, dtype=np.float32)
+        for i, w in enumerate(weights):
+            lbl, bg, fg, pct, W = self.bar_rows[i]
+            w = float(max(0.0, min(1.0, w)))
+            x1 = 110 + int(W * w)
+            # resize fg rect
+            self.bars_canvas.coords(fg, 110, self.bars_canvas.coords(fg)[1], x1, self.bars_canvas.coords(fg)[3])
+            self.bars_canvas.itemconfig(pct, text=f"{w*100:.1f}%")
+
+    # ---------- Events ----------
     def _on_canvas_click(self, e):
         x, y = self._clamp_to_circle(e.x, e.y)
         self.mix_pos = [x, y]
+        self.canvas.delete("all")
+        self._draw_wheel()
         self._draw_mixer_point()
-        self._update_weights_label()
-        # sync fusion textbox with current weights
-        w = self._weights_from_point(self.mix_pos[0], self.mix_pos[1])
-        self.fusion_var.set(", ".join(f"{wi:.2f}" for wi in w))
+        self._update_weights()
 
     def _on_canvas_drag(self, e):
         self._on_canvas_click(e)
 
-    def _update_weights_label(self):
-        if not hasattr(self, 'weights_label'):
-            return
-        w = self._weights_from_point(self.mix_pos[0], self.mix_pos[1])
-        pieces = [f"{name}:{w[i]:.2f}" for i, name in enumerate(self.voices)]
-        self.weights_label.config(text="Weights: " + "  ".join(pieces))
+    def _on_canvas_motion(self, e):
+        # simple hover halo over nearest anchor
+        x, y = e.x, e.y
+        _, imin = self._weights_from_point(x, y)
+        if imin != self._hover_anchor_idx:
+            self._hover_anchor_idx = imin
+            self.canvas.delete("all")
+            self._draw_wheel()
+            # draw hover halo
+            if imin >= 0:
+                ax, ay = self.anchor_positions[imin]
+                self.canvas.create_oval(ax - 16, ay - 16, ax + 16, ay + 16, outline="#FFF", width=1, dash=(2, 2))
+            self._draw_mixer_point()
 
+    def _update_weights(self):
+        w, _ = self._weights_from_point(self.mix_pos[0], self.mix_pos[1])
+        self._update_bars(w)
+
+        # update fusion box to reflect current weights (rounded)
+        self.fusion_var.set(", ".join(f"{wi:.2f}" for wi in w))
 
     def _apply_fusion_text(self):
-        """Parse weights text like '0.6,0.4' or 'af_heart:0.7, am_michael:0.3' and move the dot."""
         raw = self.fusion_var.get().strip()
         if not raw:
             return
@@ -295,17 +379,27 @@ class VoiceMixerGUI:
         except Exception as e:
             messagebox.showerror("Weights parse error", str(e))
             return
-        # Move the point to the convex combination of anchors
+
+        # Move point to convex combo of anchors
         x, y = self._point_from_weights(w)
+        x, y = self._clamp_to_circle(x, y)
         self.mix_pos = [x, y]
+        self.canvas.delete("all")
+        self._draw_wheel()
         self._draw_mixer_point()
-        self._update_weights_label()
+        self._update_weights()
 
 
 def main():
     root = tk.Tk()
+    # make ttk look a tad nicer
+    try:
+        root.call("tk", "scaling", 1.2)
+    except Exception:
+        pass
     app = VoiceMixerGUI(root, lang_code="a", voices=DEFAULT_VOICES, radius=180)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
