@@ -502,6 +502,12 @@ def main():
     p.add_argument("--demo_log_every", type=int, default=0)
     p.add_argument("--demo_text", type=str, default="Hi! This is an optimized Kokoro voice embedding.")
 
+    # Project/run naming
+    p.add_argument("--project_name", type=str, default="kokoro_opt",
+                   help="Project name for logging (e.g., WandB project).")
+    p.add_argument("--run_name", type=str, default="",
+                   help="Optional run name/ID for this training run.")
+
     # Val/checkpoints
     p.add_argument("--val_every", type=int, default=50)
     p.add_argument("--save_every", type=int, default=0)
@@ -644,8 +650,9 @@ def main():
     # Logger
     log_wandb = s2b(args.log_wandb)
     if log_wandb:
-        project = os.environ.get("WANDB_PROJECT", "kokoro_opt")
-        logger = WandbLogger(project=project, save_dir=str(out_dir))
+        project = args.project_name or os.environ.get("WANDB_PROJECT", "kokoro_opt")
+        run_name = args.run_name if args.run_name else None
+        logger = WandbLogger(project=project, name=run_name, save_dir=str(out_dir))
         logger.experiment.config.update({
             **vars(args),
             "sr": SR, "mode": args.mode, "n_voices": len(voice_names),

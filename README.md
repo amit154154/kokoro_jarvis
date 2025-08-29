@@ -21,45 +21,76 @@ These coefficients serve as mixing weights that combine multiple pretrained voic
 This lightweight method allows adapting Kokoro to a target voice without fully retraining the model.
 You can generate a coefficient trajectory video, similar to the one shown in the results, using your W&B run data together with the visualization script in assets/optemize_voices/kokoro_coeff_viz.py.#### Results
 <details>
-<summary><b>Show coefficient trajectory & audio samples</b></summary>
+<summary><b>research coefficient trajectory and finetuning on real speaker data</b></summary>
 
 <br>
 
 <div align="center">
 
 <div align="center">
-  <img src="assets/optemize_voices/coeff_viz.gif" alt="Coefficient trajectory (animated)" width="100%"/><br/>
+  <img src="assets/optemize_voices/real_voice_coeffs/coeff_viz.gif" alt="Coefficient trajectory (animated)" width="100%"/><br/>
   <sub>
     Example training trajectory of mixture weights in the circular embedding space.  
     (Run may not be fully converged yet — see the full logs on 
     <a href="https://wandb.ai/amit154154/kokoro_opt/runs/nrtl7bn1?nw=nwuseramit154154">W&B</a>)  
     &nbsp;•&nbsp;
-    <a href="assets/optemize_voices/coeff_viz.mp4">Download MP4</a>
+    <a href="assets/optemize_voices/real_voice_coeffs/coeff_viz.gif">Download MP4</a>
   </sub>
 </div>
 
 **Audio Samples**  
 _GitHub tip: the README preview doesn’t always render audio players. Click a link below, then press **“View raw”** to play in your browser._
 
-- ▶️ **Start Generation** — [WAV](assets/optemize_voices/start_generation.wav)  
-- ▶️ **Optimized Generation** — [WAV](assets/optemize_voices/optemize_generation.wav)  
-- ▶️ **Ground Truth** — [WAV](assets/optemize_voices/ground_truth.wav)  
+- ▶️ **Start Generation** — [WAV](assets/optemize_voices_real_voice/start_generation.wav)  
+- ▶️ **Optimized Generation** — [WAV](assets/optemize_voices_real_voice/optemize_generation.wav)  
+- ▶️ **Ground Truth** — [WAV](assets/optemize_voices_real_voice/ground_truth.wav)  
 
 </div>
 
 <p align="center">
-  <img src="assets/optemize_voices/loss_figure.png" width="500"/>
+  <img src="assets/optemize_voices/real_voice_coeffs/loss_figure.png" width="500"/>
   <br><em>Loss curve showing convergence during coefficient optimization <a href="https://wandb.ai/amit154154/kokoro_opt/runs/nrtl7bn1?nw=nwuseramit154154">W&B</a>.</em>
 </p>
 
 </details>
 
+<details>
+<summary><b>coefficient optimization on synthetic "Sarah" voice</b></summary>
+
+<br>
+
+<div align="center">
+
+<div align="center">
+  <img src="assets/optemize_voices/sarah_coeffs/train_loss_epoch.png" alt="Training Loss over Epochs" width="100%"/><br/>
+  <sub>
+    Training loss curves across different learning rates during coefficient optimization.  
+    Explore all runs in the full project logs on 
+    <a href="https://wandb.ai/amit154154/kokoro_opt">W&B</a>.
+  </sub>
+</div>
+
+<div align="center">
+  <img src="assets/optemize_voices/sarah_coeffs/mse_from_gt_embedding.png" alt="MSE from Ground Truth Embedding" width="100%"/><br/>
+  <sub>
+    Mean squared error (MSE) between optimized embeddings and the ground-truth "Sarah" embedding, tracked during training.  
+    Different learning rates highlight trade-offs between convergence speed and stability.
+  </sub>
+</div>
+
+**Experiment Setup**  
+We generated **100 synthetic WAV samples** from the pretrained "Sarah" embedding and optimized coefficients to approximate the target voice.  
+Unlike the first real-speaker experiment, here the focus was on systematically exploring the effect of **different learning rates** on convergence and embedding fidelity.
+
+</div>
+
+</details>
 
 ## Goals and Research Directions
 
 - ✅ Implement optimization for voice embeddings (both simple coefficient mixing and full embedding)  
 - ✅ Train simple coefficients on a LibriTTS speaker and analyze trajectory + results  
-- [ ] Train simple coefficients on synthetic predefined speaker voices and visualize trajectories/results  
+- ✅ Train simple coefficients on synthetic predefined speaker voices and visualize trajectories/results  
 - [ ] Optimize simple coefficients on a random ensemble of voice embeddings and inspect trajectories  
 - [ ] Explore different optimizers (AdamW, etc.) and compare trajectory smoothness & convergence speed  
 - [ ] Optimize the full embedding and compare results against coefficient-based optimization  
